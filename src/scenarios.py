@@ -13,10 +13,14 @@ import pandas as pd
 from typing import List, Optional, Dict
 
 from .laser import (LaserBeam, LaserReceiver, AtmosphericConditions as LaserAtmo,
-                     compute_laser_link)
+                     compute_laser_link, FOG_HARD_BLOCK_CONDITIONS,
+                     DARPA_PRAD_ANCHOR, SYSTEM_OVERHEAD_FACTOR as LASER_OVERHEAD,
+                     MAX_SYSTEM_EFF as LASER_MAX_EFF)
 from .microwave import (MicrowaveTransmitter, MicrowaveReceiver,
                          AtmosphericConditions as MWAtmo, received_power_friis,
-                         normalize_mw_condition)
+                         normalize_mw_condition, crossover_analysis as mw_crossover,
+                         rayleigh_distance_m, spot_radius_at_range,
+                         array_aperture_area, wavelength_m as mw_wavelength)
 
 
 # ── FOB load profiles ─────────────────────────────────────────────────────
@@ -60,45 +64,63 @@ def _performance_rating(system_eff_pct: float) -> str:
         return "poor"
 
 
-def _size_microwave(
-    target_power_w: float,
+def _default_mw_rx_area(range_m: float) -> float:
+    """
+    Realistic receive aperture for FOB/vehicle deployment, scaled by range.
+    At 500m: ~12.5 m² (large tent/vehicle), at 2km: 50 m² (fixed station).
+    Capped: 10–200 m².
+    """
+    return min(200.0, max(10.0, range_m / 40.0))
+
+
+def _compute_microwave_fixed(
     range_m: float,
     mw_pa_power_w: float,
     mw_rx_area_m2: float,
+    mw_n_elements: int,
     condition_norm: str,
-) -> tuple:
+) -> dict:
     """
-    Auto-size microwave array to deliver target_power_w.
-    Returns (n_elements, result_dict).
-
-    Since received power scales as n_elements² (both TX power and array gain
-    scale linearly with n_elements → P_rx ∝ n²), we use:
-      n_needed = n_base * sqrt(target / p_base)
-    Then run a verification pass with the sized array.
+    Run microwave physics with FIXED hardware (no back-calculation).
+    Honest approach: report what the system actually delivers.
     """
-    # Baseline run with 1024 elements
-    n_base = 1024
-    tx_base = MicrowaveTransmitter(n_elements=n_base,
-                                    tx_power_per_element_w=mw_pa_power_w)
+    tx = MicrowaveTransmitter(n_elements=mw_n_elements,
+                               tx_power_per_element_w=mw_pa_power_w)
     rx = MicrowaveReceiver(aperture_area_m2=mw_rx_area_m2)
     atmo = MWAtmo(condition=condition_norm)
+    return received_power_friis(tx, rx, range_m, atmo)
 
-    r_base = received_power_friis(tx_base, rx, range_m, atmo)
-    p_base = r_base["dc_output_w"]
 
+def _estimate_required_mw_elements(target_power_w: float, range_m: float,
+                                    mw_pa_power_w: float, mw_rx_area_m2: float,
+                                    condition_norm: str) -> dict:
+    """
+    Back-calculate how many elements WOULD be needed to hit target.
+    Shows this even if infeasible — honest physics disclosure.
+    P_rx ∝ n² (TX power and array gain both scale with n_elements)
+    """
+    n_base = 1024
+    r = _compute_microwave_fixed(range_m, mw_pa_power_w, mw_rx_area_m2,
+                                  n_base, condition_norm)
+    p_base = r["dc_output_w"]
     if p_base > 0:
-        ratio = target_power_w / p_base
-        n_needed = int(np.ceil(n_base * np.sqrt(ratio)))
-        n_needed = max(16, min(n_needed, MAX_MW_ELEMENTS))
+        n_needed = int(np.ceil(n_base * np.sqrt(target_power_w / p_base)))
+        n_needed = max(16, n_needed)
+        feasible = n_needed <= MAX_MW_ELEMENTS
     else:
-        # Physics says basically nothing gets through — use max
-        n_needed = MAX_MW_ELEMENTS
+        n_needed = MAX_MW_ELEMENTS * 10  # effectively infinite
+        feasible = False
 
-    # Verification / final run with sized array
-    tx_final = MicrowaveTransmitter(n_elements=n_needed,
-                                     tx_power_per_element_w=mw_pa_power_w)
-    r_final = received_power_friis(tx_final, rx, range_m, atmo)
-    return n_needed, r_final
+    total_rf_kw = n_needed * mw_pa_power_w / 1000.0
+    return {
+        "n_elements_required": n_needed,
+        "total_rf_power_required_kw": round(total_rf_kw, 1),
+        "feasible_array_size": feasible,
+        "note": (
+            f"Requires {n_needed:,} elements ({int(np.sqrt(n_needed))}×{int(np.sqrt(n_needed))})"
+            f" — {'feasible' if feasible else 'INFEASIBLE (exceeds practical limits)'}"
+        ),
+    }
 
 
 def _size_laser(
@@ -147,11 +169,12 @@ def compute_scenario(
     beam_waist_m: float = 0.05,
     pv_aperture_m: float = 0.30,
     pv_type: str = "gaas",
-    # Microwave params (optional — auto-sized if not provided)
-    mw_n_elements: int = None,
-    mw_pa_power_w: float = 5.0,
-    mw_rx_area_m2: float = 3.0,
-    # Override auto-sizing
+    # Microwave params — fixed realistic hardware (not auto-sized to target)
+    mw_n_elements: int = 1024,          # 32×32 phased array (portable FOB)
+    mw_pa_power_w: float = 10.0,        # GaN MMIC: 10–50W per element standard
+    mw_rx_area_m2: float = None,        # None = auto-scale with range (10–200 m²)
+    mw_tx_aperture_m2: float = None,    # Override: compute n_elements from TX area
+    # Override auto-sizing (for laser only now)
     force_hardware: bool = False,
 ) -> dict:
     """
@@ -201,46 +224,59 @@ def compute_scenario(
         # Normalize condition string for microwave physics
         condition_norm = normalize_mw_condition(condition)
 
-        if mw_n_elements is None or not force_hardware:
-            # Auto-size array to deliver target power
-            n_elements, result_dict = _size_microwave(
-                target_power_w, range_m, mw_pa_power_w, mw_rx_area_m2, condition_norm
-            )
+        # ── Resolve aperture sizes ────────────────────────────────────────
+        if mw_rx_area_m2 is None:
+            actual_rx_area = _default_mw_rx_area(range_m)
+        else:
+            actual_rx_area = mw_rx_area_m2
+
+        # If TX aperture given, derive n_elements from it
+        if mw_tx_aperture_m2 is not None:
+            lam = mw_wavelength(5.8e9)
+            d = 0.5 * lam
+            n_elements = max(64, int(mw_tx_aperture_m2 / d**2))
         else:
             n_elements = mw_n_elements
-            tx = MicrowaveTransmitter(n_elements=n_elements,
-                                       tx_power_per_element_w=mw_pa_power_w)
-            rx = MicrowaveReceiver(aperture_area_m2=mw_rx_area_m2)
-            atmo = MWAtmo(condition=condition_norm)
-            result_dict = received_power_friis(tx, rx, range_m, atmo)
+
+        # ── Fixed hardware run — honest physics, no auto-sizing ───────────
+        result_dict = _compute_microwave_fixed(
+            range_m, mw_pa_power_w, actual_rx_area, n_elements, condition_norm
+        )
 
         dc_power_w    = result_dict["dc_output_w"]
         elec_input_w  = result_dict["electrical_input_w"]
         system_eff    = result_dict["total_system_eff"]
         physics_result = result_dict
 
+        # ── What would be required to hit the target? (even if infeasible) ─
+        req_hw = _estimate_required_mw_elements(
+            target_power_w, range_m, mw_pa_power_w, actual_rx_area, condition_norm
+        )
+
         # Loss budget and required hardware
         loss_budget = result_dict.get("loss_budget", {})
         total_rf_kw = n_elements * mw_pa_power_w / 1000.0
         required_hardware = {
-            "type":              "Phased array + Rectenna",
-            "n_elements":        n_elements,
-            "array_size_approx": f"~{int(np.sqrt(n_elements))}×{int(np.sqrt(n_elements))}",
+            "type":                  "Phased array + Rectenna",
+            "n_elements":            n_elements,
+            "array_size_approx":     f"~{int(np.sqrt(n_elements))}×{int(np.sqrt(n_elements))}",
             "pa_power_per_element_w": mw_pa_power_w,
-            "total_rf_power_kw": round(total_rf_kw, 2),
-            "wall_plug_input_kw":round(elec_input_w / 1000, 2),
-            "rx_aperture_area_m2": mw_rx_area_m2,
-            "frequency_ghz":     5.8,
-            "array_gain_dbi":    round(result_dict.get("array_gain_dbi", 0), 1),
-            "beam_radius_at_rx_m": round(result_dict.get("beam_radius_m", 0), 1),
-            "condition_mapped":  condition_norm,
+            "total_rf_power_kw":     round(total_rf_kw, 2),
+            "wall_plug_input_kw":    round(elec_input_w / 1000, 2),
+            "rx_aperture_area_m2":   actual_rx_area,
+            "frequency_ghz":         5.8,
+            "array_gain_dbi":        round(result_dict.get("array_gain_dbi", 0), 1),
+            "beam_radius_at_rx_m":   round(result_dict.get("beam_radius_m", 0), 1),
+            "rayleigh_distance_m":   round(result_dict.get("rayleigh_distance_m", 0), 1),
+            "condition_mapped":      condition_norm,
+            # Honest disclosure: what target delivery would require
+            "to_deliver_target_kw":  f"{target_power_kw} kW requires: {req_hw['note']}",
         }
 
     else:
         raise ValueError(f"Unknown mode: {mode}")
 
     # ── Link margin ───────────────────────────────────────────────────────
-    # How much headroom above target (dB)
     if dc_power_w > 0 and target_power_w > 0:
         link_margin_db = 10 * np.log10(dc_power_w / target_power_w)
     else:
@@ -249,16 +285,79 @@ def compute_scenario(
     # ── Performance rating ────────────────────────────────────────────────
     performance_rating = _performance_rating(system_eff * 100)
 
-    # ── Feasibility warning ───────────────────────────────────────────────
-    feasibility_ok = bool(dc_power_w >= target_power_w * 0.5)  # within 50% of target
-    feasibility_warning = None
-    if not feasibility_ok:
-        feasibility_warning = (
-            f"Target {target_power_kw:.1f} kW at {range_m/1000:.1f} km requires "
-            f"hardware ({required_hardware.get('wall_plug_input_kw', '?')} kW input) "
-            f"that may be impractical. "
-            f"System efficiency is only {system_eff*100:.2f}%."
-        )
+    # ── Comprehensive feasibility object ─────────────────────────────────
+    range_km = range_m / 1000.0
+    is_feasible = bool((system_eff * 100) >= 1.0)
+
+    if mode == "microwave":
+        beam_r = physics_result.get("beam_radius_at_range_m", 0)
+        rayleigh_m = physics_result.get("rayleigh_distance_m", 0)
+        regime = physics_result.get("regime", "far-field")
+        req_rx_area = physics_result.get("req_rx_area_50pct_m2", 0)
+        actual_rx = physics_result.get("actual_rx_area_m2", actual_rx_area)
+        if not is_feasible:
+            feas_note = (
+                f"MW beam spreads to {beam_r:.0f}m radius at {range_km:.1f}km. "
+                f"Need ~{req_rx_area:.0f}m² RX to capture 50% — actual is {actual_rx:.0f}m². "
+                f"Consider laser for ranges >{range_km:.1f}km in clear sky."
+            )
+        elif range_km < 2.0:
+            feas_note = f"Marginal: MW works at {range_km:.1f}km but beam is {beam_r:.0f}m wide."
+        else:
+            feas_note = (
+                f"Microwave beam is {beam_r:.0f}m radius at {range_km:.1f}km — "
+                f"larger than the {actual_rx:.0f}m² RX aperture. "
+                f"Only capturing a fraction of transmitted power."
+            )
+        crossover = mw_crossover(range_m, condition)
+        best_mode_for_range = crossover["best_mode"]
+        best_mode_reason = crossover["reason"]
+    else:
+        # Laser
+        fog_blocked = condition in FOG_HARD_BLOCK_CONDITIONS
+        if fog_blocked:
+            feas_note = (
+                f"FOG HARD BLOCK: laser link unavailable in fog/light_fog. "
+                f"Switch to microwave (only ~{0.22*range_km:.2f} dB/km attenuation in rain)."
+            )
+            is_feasible = False
+        elif not is_feasible:
+            feas_note = (
+                f"Laser link very inefficient at {range_km:.1f}km in {condition}. "
+                f"Check atmospheric conditions or reduce range."
+            )
+        else:
+            feas_note = (
+                f"Laser efficient at {range_km:.1f}km in {condition}. "
+                f"DARPA PRAD anchor: 800W @ 8.6km at ~20% eff (2025 state-of-art)."
+            )
+        crossover = mw_crossover(range_m, condition)
+        best_mode_for_range = crossover["best_mode"]
+        best_mode_reason = crossover["reason"]
+        # Laser-specific geometry
+        beam_r = physics_result.beam_radius_at_rx_m if hasattr(physics_result, 'beam_radius_at_rx_m') else 0
+        rayleigh_m = None  # not applicable the same way for laser
+        regime = "laser_gaussian"
+        req_rx_area = None
+
+    feasibility = {
+        "is_feasible":            is_feasible,
+        "regime":                 regime,
+        "rayleigh_distance_m":    rayleigh_m,
+        "beam_radius_at_range_m": round(beam_r, 2) if beam_r else None,
+        "required_rx_aperture_m2": round(req_rx_area, 1) if req_rx_area else None,
+        "note":                   feas_note,
+        "best_mode_for_range":    best_mode_for_range,
+        "best_mode_reason":       best_mode_reason,
+        "darpa_prad_anchor":      DARPA_PRAD_ANCHOR["description"] +
+                                  f" — {DARPA_PRAD_ANCHOR['dc_power_w']}W @ "
+                                  f"{DARPA_PRAD_ANCHOR['range_km']}km, "
+                                  f"{DARPA_PRAD_ANCHOR['system_efficiency_pct']}% eff",
+    }
+
+    # ── Legacy feasibility_ok / warning (kept for backward compat) ────────
+    feasibility_ok = is_feasible
+    feasibility_warning = None if is_feasible else feas_note
 
     # ── Operational metrics ───────────────────────────────────────────────
     profile = FOB_PROFILES.get(fob_profile, FOB_PROFILES["squad_outpost"])
@@ -306,7 +405,9 @@ def compute_scenario(
         "performance_rating": performance_rating,
         "feasibility_ok":     feasibility_ok,
         "feasibility_warning": feasibility_warning,
-        # raw physics (kept for safety endpoint etc.)
+        # v3 comprehensive feasibility analysis
+        "feasibility":        feasibility,
+        # raw physics (kept for safety endpoint etc.) — make_serializable handles LaserLinkResult dataclass
         "physics": physics_result,
     }
 

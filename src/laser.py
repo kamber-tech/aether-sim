@@ -25,16 +25,25 @@ LAMBDA_NM = 1070.0     # nm  (Yb-doped fiber laser, industry standard for WPT)
 LAMBDA_M  = LAMBDA_NM * 1e-9  # m
 
 # ── Atmospheric attenuation coefficients @ 1070 nm (Beer-Lambert) ─────────
-# Units: 1/km (extinction coefficient beta)
-# Ref: McMaster ECE SPIE2000 / Koschmieder model
+# Units: 1/km (extinction coefficient beta; dB/km = beta * 4.343)
+# Validated sources (2025):
+#   Clear sky: 0.93–0.98 transmittance/km → 0.02–0.07 dB/km (use midpoint 0.05 dB/km)
+#   Light haze: 0.5–2 dB/km (use 1.0 dB/km)
+#   Fog: 10–30 dB/km → HARD BLOCK (availability gate, not just a penalty)
+#   Rain: 0.09–0.35 dB/km — rain is NOT the worst for laser; fog/cloud is
+#   Smoke: ~5 dB/km battlefield estimate
+# Conversion: beta = dB_per_km / 4.343
+FOG_HARD_BLOCK_CONDITIONS = {"fog", "light_fog"}  # link unavailable; return zero efficiency
+
 ATMO_CONDITIONS = {
-    "clear":      0.10,   # 0.43 dB/km  — standard clear day (V > 23 km)
-    "haze":       1.00,   # 4.34 dB/km  — haze (V ~ 2-4 km)
-    "light_fog":  4.00,   # 17.4 dB/km  — light fog (V ~ 0.5 km)
-    "fog":       10.00,   # 43.4 dB/km  — dense fog
-    "smoke":      3.00,   # 13.0 dB/km  — battlefield smoke (estimated)
-    "dust":       2.00,   # 8.7  dB/km  — desert dust storm (estimated)
-    "rain":       0.50,   # 2.17 dB/km  — moderate rain (1070 nm less affected than visible)
+    "clear":      0.0115,  # ≈0.05 dB/km  — validated clear day (0.02–0.07 dB/km range)
+    "haze":       0.230,   # ≈1.0  dB/km  — light haze (0.5–2 dB/km range)
+    "light_fog":  1.15,    # ≈5.0  dB/km  — light fog; HARD BLOCK above ~2 km
+    "fog":        6.91,    # ≈30.0 dB/km  — dense fog; HARD BLOCK at any range
+    "smoke":      1.15,    # ≈5.0  dB/km  — battlefield smoke (similar to light fog)
+    "dust":       0.693,   # ≈3.0  dB/km  — desert dust storm
+    "rain":       0.046,   # ≈0.20 dB/km  — validated rain (0.09–0.35 dB/km range)
+                           #                 Note: rain is mild for laser vs fog/cloud
 }
 
 # ── Atmospheric turbulence: Cn² by condition ──────────────────────────────
@@ -191,15 +200,61 @@ def fried_parameter(range_m: float, conditions: AtmosphericConditions,
 def turbulence_strehl_ratio(beam: LaserBeam, range_m: float,
                              conditions: AtmosphericConditions) -> float:
     """
-    Strehl ratio due to atmospheric turbulence.
+    Strehl ratio due to atmospheric turbulence (PEAK irradiance metric).
     S_turb = exp(-(D/r₀)^(5/3))
     where D = transmitter aperture diameter = 2*w0
+
+    NOTE: This is for COHERENT systems / peak irradiance only.
+    For WPT power collection, use turbulence_wpt_factor() instead.
     Ref: Roddier 1981; Maréchal approximation for strong turbulence
     """
     r0 = fried_parameter(range_m, conditions, beam.wavelength_m)
     D = 2 * beam.waist_radius_m
     S = np.exp(-((D / r0)**(5.0/3.0)))
     return float(np.clip(S, 1e-6, 1.0))
+
+
+def turbulence_wpt_factor(beam: LaserBeam, range_m: float,
+                           conditions: AtmosphericConditions,
+                           receiver_radius_m: float) -> float:
+    """
+    Power delivery factor for WPT due to atmospheric turbulence.
+
+    Unlike Strehl (peak irradiance for coherent systems), this computes the
+    TOTAL POWER fraction delivered to a finite aperture after turbulence
+    broadens the long-term beam profile.
+
+    Two effects modeled:
+    1. Beam spreading: turbulence increases the long-term beam radius,
+       potentially pushing some energy outside the receiver aperture.
+       w_LT = w_vac * sqrt(1 + (w₀/r₀)^(5/3))    [long-term broadening]
+    2. Scintillation penalty: rapid intensity fluctuations reduce average
+       PV output. For strong turbulence (σ_R² ≥ 1), penalty ~0.5–1.5 dB.
+       T_scint = max(0.60, exp(-0.12 * min(sigma_R2, 4.0)))
+
+    Ref: Andrews & Phillips "Laser Beam Propagation through Random Media"
+         (long-term beam profile, aperture averaging)
+    """
+    w_vac = beam_radius_at_range(range_m, beam)
+    r0 = fried_parameter(range_m, conditions, beam.wavelength_m)
+
+    # Long-term beam radius including turbulence spreading
+    broadening = 1.0 + (beam.waist_radius_m / max(r0, 1e-6))**(5.0/3.0)
+    w_LT = w_vac * np.sqrt(broadening)
+
+    # Power in receiver aperture (turbulence-broadened long-term beam)
+    p_lt = 1.0 - np.exp(-2.0 * receiver_radius_m**2 / w_LT**2)
+    # Power in receiver aperture (diffraction-limited, no turbulence)
+    p_vac = 1.0 - np.exp(-2.0 * receiver_radius_m**2 / w_vac**2)
+
+    spreading_factor = (p_lt / p_vac) if p_vac > 1e-10 else 1.0
+
+    # Scintillation penalty (intensity fluctuations reduce average PV output)
+    sigma_R2 = rytov_variance(range_m, conditions, beam.wavelength_m)
+    # Capped at σ_R² = 4 (saturation regime); max ~1.5 dB penalty
+    scint_penalty = max(0.60, np.exp(-0.12 * min(sigma_R2, 4.0)))
+
+    return float(np.clip(spreading_factor * scint_penalty, 0.01, 1.0))
 
 
 def pointing_jitter_loss(beam: LaserBeam, range_m: float, jitter_urad: float = 5.0) -> float:
@@ -274,6 +329,29 @@ class LaserLinkResult:
     loss_fractions: dict
 
 
+# ── DARPA PRAD anchor point (sanity check reference) ─────────────────────
+# DARPA POWER PRAD 2025: 800 W delivered, 8.6 km range, ~20% system efficiency
+# This is state-of-the-art. Use as external validation anchor in feasibility checks.
+DARPA_PRAD_ANCHOR = {
+    "description": "DARPA POWER PRAD 2025 field demo",
+    "dc_power_w": 800,
+    "range_km": 8.6,
+    "system_efficiency_pct": 20.0,
+    "notes": "Laser-out to electricity-out. Best demonstrated result as of 2025.",
+}
+JAXA_MW_ANCHOR = {
+    "description": "JAXA microwave WPT demo 2021",
+    "system_efficiency_pct": 22.0,
+    "notes": "Best demonstrated microwave WPT end-to-end efficiency as of 2021.",
+}
+
+# Real-world system overhead factor: accounts for control electronics, thermal mgmt,
+# array non-uniformity, connector losses, regulatory derating, etc.
+# Anchored to: DARPA PRAD 20%, JAXA MW 22% vs component-chain ~30-40%
+SYSTEM_OVERHEAD_FACTOR = 0.65   # multiply physics-chain efficiency by this
+MAX_SYSTEM_EFF = 0.35           # hard cap: 35% (above DARPA/JAXA state-of-art)
+
+
 def compute_laser_link(
     range_m: float,
     beam: LaserBeam,
@@ -292,7 +370,39 @@ def compute_laser_link(
       - M² beam quality: increases divergence, larger w(R) → less geometric collection
       - PV temperature derating: 0.4%/°C above 25°C, cell at 60°C → 14% penalty
       - Central obscuration: 20% area loss for secondary mirror
+      - Fog hard block: fog/light_fog conditions return zero efficiency (availability gate)
+      - System overhead factor: 0.65× physics chain, capped at 35%
     """
+    # ── Fog hard block ────────────────────────────────────────────────────
+    if atmosphere.condition in FOG_HARD_BLOCK_CONDITIONS:
+        elec_input = beam.output_power_w / beam.wall_plug_efficiency
+        zero_lb = {
+            "wall_plug_loss_db": round(-10*np.log10(beam.wall_plug_efficiency), 2),
+            "atmospheric_absorption_db": 999.0,
+            "turbulence_strehl_db": 0.0, "pointing_jitter_db": 0.0,
+            "geometric_collection_db": 0.0, "central_obscuration_db": 0.0,
+            "pv_base_efficiency_db": 0.0, "pv_temp_derating_db": 0.0,
+            "dc_dc_conditioning_db": 0.0, "m2_beam_quality": beam.m_squared,
+            "fried_r0_m": 0.0, "Cn2_m_neg23": get_Cn2(atmosphere),
+            "rytov_variance": 0.0,
+            "total_loss_db": None,
+            "fog_hard_block": True,
+        }
+        return LaserLinkResult(
+            range_m=range_m, condition=atmosphere.condition,
+            electrical_input_w=elec_input, optical_tx_power_w=beam.output_power_w,
+            beam_power_at_rx_w=0.0, captured_power_w=0.0,
+            pv_output_w=0.0, dc_output_w=0.0,
+            wall_plug_eff=beam.wall_plug_efficiency, atmospheric_transmittance=0.0,
+            geometric_collection_eff=0.0, turbulence_strehl=0.0, pointing_loss=0.0,
+            m2_beam_quality=beam.m_squared, pv_efficiency=0.0, pv_temp_derating=0.0,
+            obscuration_factor=0.0, conditioning_eff=receiver.power_conditioning_eff,
+            total_system_eff=0.0, link_budget_db=-999.0,
+            beam_radius_at_rx_m=beam_radius_at_range(range_m, beam),
+            rytov_variance=0.0, fried_r0_m=0.0, Cn2=get_Cn2(atmosphere),
+            peak_irradiance_wx_m2=0.0, loss_budget=zero_lb, loss_fractions={},
+        )
+
     # ── Electrical input ──────────────────────────────────────────────────
     elec_input = beam.output_power_w / beam.wall_plug_efficiency
     wall_plug_eff = beam.wall_plug_efficiency
@@ -315,7 +425,10 @@ def compute_laser_link(
     # ── Turbulence ────────────────────────────────────────────────────────
     Cn2_val  = get_Cn2(atmosphere)
     r0       = fried_parameter(range_m, atmosphere, beam.wavelength_m)
+    # Strehl for diagnostics/peak irradiance only — NOT used in power chain
     S_turb   = turbulence_strehl_ratio(beam, range_m, atmosphere)
+    # WPT power factor: accounts for beam spreading into large aperture
+    T_turb_wpt = turbulence_wpt_factor(beam, range_m, atmosphere, receiver.aperture_radius_m)
     sigma_r2 = rytov_variance(range_m, atmosphere)
 
     # ── Pointing jitter ───────────────────────────────────────────────────
@@ -331,8 +444,9 @@ def compute_laser_link(
     pv_temp_db = -10 * np.log10(max(pv_temp_derating_factor, 1e-4))
 
     # ── Power at receiver ─────────────────────────────────────────────────
-    # Turbulence and pointing affect the entire beam before collection
-    p_at_rx = beam.output_power_w * T_atmo * S_turb * L_jitter
+    # Use WPT turbulence factor (not Strehl) — Strehl is for coherent peak only.
+    # WPT turbulence factor captures: long-term beam broadening + scintillation penalty.
+    p_at_rx = beam.output_power_w * T_atmo * T_turb_wpt * L_jitter
 
     # Geometric + fill factor + obscuration on the captured fraction
     p_captured = p_at_rx * geo_eff * receiver.fill_factor * obs_factor
@@ -345,53 +459,62 @@ def compute_laser_link(
     # ── Power conditioning ────────────────────────────────────────────────
     p_dc = p_pv * receiver.power_conditioning_eff
 
-    # ── System efficiency ─────────────────────────────────────────────────
-    total_eff = p_dc / elec_input if elec_input > 0 else 0.0
+    # ── System efficiency — apply real-world overhead + cap ───────────────
+    physics_eff = p_dc / elec_input if elec_input > 0 else 0.0
+    total_eff = min(MAX_SYSTEM_EFF, physics_eff * SYSTEM_OVERHEAD_FACTOR)
+    # Back-calculate DC power after overhead adjustment
+    p_dc = total_eff * elec_input
 
     # ── Link budget (dB) ──────────────────────────────────────────────────
-    lb_db = 10 * np.log10(p_dc / elec_input) if (p_dc > 0 and elec_input > 0) else -999.0
+    lb_db = 10 * np.log10(total_eff) if total_eff > 0 else -999.0
 
     # ── Peak irradiance at receiver face ──────────────────────────────────
     peak_irr = peak_irradiance_at_range(range_m, beam) * T_atmo * S_turb * L_jitter
 
     # ── Loss budget (dB) ──────────────────────────────────────────────────
-    wall_plug_db   = -10 * np.log10(wall_plug_eff)
-    atmo_db_val    = atmo_db
-    turb_strehl_db = -10 * np.log10(max(S_turb, 1e-10))
-    geo_db         = -10 * np.log10(max(geo_eff * receiver.fill_factor, 1e-10))
-    rect_eff_db    = -10 * np.log10(pv_eff_derated)
-    dc_dc_db       = -10 * np.log10(receiver.power_conditioning_eff)
-    m2_db          = -10 * np.log10(max(1.0 / m2_factor**2, 1e-10)) if m2_factor > 1 else 0.0
-    # M² increases beam area at range → reduces peak irradiance (captured by geo_eff already)
+    wall_plug_db      = -10 * np.log10(wall_plug_eff)
+    atmo_db_val       = atmo_db
+    # WPT turbulence factor (power delivery) — replaces Strehl in power chain
+    turb_wpt_db       = -10 * np.log10(max(T_turb_wpt, 1e-10))
+    # Strehl kept for diagnostics (peak irradiance / coherent imaging reference)
+    turb_strehl_db    = -10 * np.log10(max(S_turb, 1e-10))
+    geo_db            = -10 * np.log10(max(geo_eff * receiver.fill_factor, 1e-10))
+    rect_eff_db       = -10 * np.log10(pv_eff_derated)
+    dc_dc_db          = -10 * np.log10(receiver.power_conditioning_eff)
+    m2_db             = -10 * np.log10(max(1.0 / m2_factor**2, 1e-10)) if m2_factor > 1 else 0.0
 
     loss_budget = {
-        "wall_plug_loss_db":         round(wall_plug_db, 2),
-        "atmospheric_absorption_db": round(atmo_db_val, 3),
-        "turbulence_strehl_db":      round(turb_strehl_db, 2),
-        "pointing_jitter_db":        round(jitter_db, 2),
-        "geometric_collection_db":   round(geo_db, 2),
-        "central_obscuration_db":    round(obscuration_db, 2),
-        "pv_base_efficiency_db":     round(-10 * np.log10(pv_eff_base), 2),
-        "pv_temp_derating_db":       round(pv_temp_db, 2),
-        "dc_dc_conditioning_db":     round(dc_dc_db, 2),
-        "m2_beam_quality":           round(m2_factor, 2),
-        "fried_r0_m":                round(r0, 4),
-        "Cn2_m_neg23":               Cn2_val,
-        "rytov_variance":            round(sigma_r2, 6),
-        "total_loss_db":             round(-lb_db, 2) if p_dc > 0 else None,
+        "wall_plug_loss_db":           round(wall_plug_db, 2),
+        "atmospheric_absorption_db":   round(atmo_db_val, 3),
+        # WPT turbulence (beam spreading + scintillation, large aperture)
+        "turbulence_strehl_db":        round(turb_wpt_db, 2),
+        # Coherent Strehl (diagnostic only — not used in power chain)
+        "coherent_strehl_db_info_only": round(turb_strehl_db, 2),
+        "pointing_jitter_db":          round(jitter_db, 2),
+        "geometric_collection_db":     round(geo_db, 2),
+        "central_obscuration_db":      round(obscuration_db, 2),
+        "pv_base_efficiency_db":       round(-10 * np.log10(pv_eff_base), 2),
+        "pv_temp_derating_db":         round(pv_temp_db, 2),
+        "dc_dc_conditioning_db":       round(dc_dc_db, 2),
+        "m2_beam_quality":             round(m2_factor, 2),
+        "fried_r0_m":                  round(r0, 4),
+        "Cn2_m_neg23":                 Cn2_val,
+        "rytov_variance":              round(sigma_r2, 6),
+        "total_loss_db":               round(-lb_db, 2) if p_dc > 0 else None,
     }
 
     loss_fractions = {
-        "wall_plug":              round(wall_plug_eff, 4),
-        "atmospheric":            round(T_atmo, 6),
-        "turbulence_strehl":      round(S_turb, 4),
-        "pointing_jitter":        round(L_jitter, 4),
-        "geometric_collection":   round(geo_eff, 4),
-        "fill_factor":            round(receiver.fill_factor, 4),
-        "central_obscuration":    round(obs_factor, 4),
-        "pv_base_efficiency":     round(pv_eff_base, 4),
-        "pv_temp_derating":       round(pv_temp_derating_factor, 4),
-        "dc_dc_conditioning":     round(receiver.power_conditioning_eff, 4),
+        "wall_plug":                  round(wall_plug_eff, 4),
+        "atmospheric":                round(T_atmo, 6),
+        "turbulence_wpt_factor":      round(T_turb_wpt, 4),  # used in power chain
+        "turbulence_strehl_info":     round(S_turb, 6),       # diagnostic only
+        "pointing_jitter":            round(L_jitter, 4),
+        "geometric_collection":       round(geo_eff, 4),
+        "fill_factor":                round(receiver.fill_factor, 4),
+        "central_obscuration":        round(obs_factor, 4),
+        "pv_base_efficiency":         round(pv_eff_base, 4),
+        "pv_temp_derating":           round(pv_temp_derating_factor, 4),
+        "dc_dc_conditioning":         round(receiver.power_conditioning_eff, 4),
     }
 
     return LaserLinkResult(
@@ -406,7 +529,7 @@ def compute_laser_link(
         wall_plug_eff=wall_plug_eff,
         atmospheric_transmittance=T_atmo,
         geometric_collection_eff=geo_eff,
-        turbulence_strehl=S_turb,
+        turbulence_strehl=T_turb_wpt,  # WPT power factor (not coherent Strehl)
         pointing_loss=L_jitter,
         m2_beam_quality=m2_factor,
         pv_efficiency=pv_eff_derated,
