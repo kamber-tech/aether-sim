@@ -7,6 +7,38 @@
 
 ---
 
+## Physics Corrections Applied (2026-02-24 afternoon)
+
+Three backend physics bugs were identified and fixed after the initial validation run:
+
+### Fix 1 — Smoke attenuation: 5 dB/km → 8 dB/km
+- **File:** `src/laser.py`, `EXTINCTION_COEFF["smoke"]`
+- **Old:** `beta = 1.15 /km` → 5.0 dB/km (labeled "similar to light fog" — incorrect)
+- **New:** `beta = 1.84 /km` → 8.0 dB/km (dense battlefield smoke, MIL-C-70214B, 5–15 dB/km range)
+- **Impact:** Smoke scenario efficiency drops ~4× (e.g., UC4 smoke: `atm_trans` 0.100 → 0.025). Input power to deliver through smoke increases ~4×. All smoke-condition results in this report are now stale.
+
+### Fix 2 — InP cells upgrade factor: 1.57× → 1.10×
+- **File:** `src/scenarios.py`, `compute_optimized_scenario()`
+- **Old:** `inp_factor = 0.55 / 0.35` — used wrong base PV efficiency (35% vs actual 50% GaAs)
+- **New:** `inp_factor = 0.55 / 0.50 = 1.10` — correct comparison of base GaAs (50%) to InP (55%), both with same 0.86 temperature derating
+- **Impact:** InP upgrade now gives +10% efficiency gain (not +57%). Optimized scenarios at ranges where InP-alone is tested will show lower efficiency.
+
+### Fix 3 — Large aperture factor: 4× → 2× (laser)
+- **File:** `src/scenarios.py`, `compute_optimized_scenario()`
+- **Old:** `aperture_factor = 4.0` — assumed 4× geometric collection gain even when baseline geometric capture was already 100%
+- **New:** `aperture_factor = 2.0` — conservative estimate of beam divergence reduction from larger optics
+- **Impact:** Optimized mode efficiency at 2 km drops from 35% → 29.2% (now range-dependent capped).
+
+### Fix 4 — Optimized mode efficiency cap: flat 35% → range-dependent
+- **File:** `src/scenarios.py`, `compute_optimized_scenario()`
+- **Old:** `min(opt_eff, 35.0)` — flat 35% regardless of range
+- **New:** `min(opt_eff, 35.0 / (1 + range_km / 10.0))` — anchored to DARPA PRAD 2025 (~20% at 8.6 km)
+- **Verification:** 0.5 km → 33.3%, 2 km → 29.2%, 5 km → 23.3%, 8.6 km → 18.8% (matches DARPA real-world anchor)
+
+**Note:** The efficiency values reported in the scenario sections below reflect the pre-fix state. Re-running validation against the updated backend would revise smoke scenario numbers significantly. Core physics chain (Fried r₀, turbulence, pointing jitter, PV conversion) was verified correct and unchanged.
+
+---
+
 ## Summary
 
 The simulator's core physics engine is sound: efficiency formulas, link budgets, and atmospheric models are internally consistent. The main issues are:
