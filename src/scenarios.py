@@ -161,8 +161,8 @@ def compute_scenario(
     range_m: float,
     target_power_kw: float,
     condition: str = "clear",
-    fob_profile: str = "squad_outpost",
-    convoy_distance_km: float = 50.0,
+    fob_profile: str = "auto",
+    convoy_distance_km: float = 100.0,
     convoy_trips_month: float = 4.0,
     # Laser params (optional — auto-sized if not provided)
     laser_power_w: float = None,
@@ -360,14 +360,27 @@ def compute_scenario(
     feasibility_warning = None if is_feasible else feas_note
 
     # ── Operational metrics ───────────────────────────────────────────────
-    profile = FOB_PROFILES.get(fob_profile, FOB_PROFILES["squad_outpost"])
-    base_load_kw = profile["base_kw"]
+    # Auto-select FOB profile based on target power if not explicitly set
+    if fob_profile == "auto" or fob_profile == "squad_outpost":
+        if target_power_kw <= 3:
+            fob_profile = "small_patrol"
+        elif target_power_kw <= 8:
+            fob_profile = "squad_outpost"
+        elif target_power_kw <= 30:
+            fob_profile = "platoon_fob"
+        else:
+            fob_profile = "company_fob"
+
+    profile = FOB_PROFILES.get(fob_profile, FOB_PROFILES["platoon_fob"])
+    # Use the larger of: FOB base load or target power (WPT replaces generator load)
+    ref_load_kw = max(target_power_kw, profile["base_kw"])
 
     # Fraction of FOB load covered by WPT
-    wpt_coverage = min(dc_power_w / 1000.0 / base_load_kw, 1.0)
+    dc_kw = dc_power_w / 1000.0
+    wpt_coverage = min(dc_kw / ref_load_kw, 1.0)
 
-    # Fuel saved (L/day) — WPT covers fraction of load
-    gen_fuel_rate_lhr = get_fuel_rate(base_load_kw)
+    # Fuel saved (L/day) — based on reference load generator fuel rate
+    gen_fuel_rate_lhr = get_fuel_rate(ref_load_kw)
     fuel_saved_l_day  = gen_fuel_rate_lhr * 24 * wpt_coverage
     fuel_saved_l_yr   = fuel_saved_l_day * 365
     fuel_cost_saved_yr = fuel_saved_l_yr * DIESEL_FULLY_BURDENED_USD_L
@@ -375,10 +388,10 @@ def compute_scenario(
     # Generator runtime hours saved
     gen_hours_saved_yr = 8760 * wpt_coverage
 
-    # Convoy analysis
-    convoy_dist_miles = convoy_distance_km * 0.621371
-    fuel_l_per_convoy = gen_fuel_rate_lhr * (convoy_distance_km / 25.0)
-    convoys_eliminated_yr = min(convoy_trips_month * 12 * wpt_coverage, convoy_trips_month * 12)
+    # Convoy analysis — derived from actual fuel savings (not fixed trips/month)
+    FUEL_PER_CONVOY_L = 500.0          # litres per resupply run
+    convoy_dist_miles = convoy_distance_km * 0.621371   # round-trip miles
+    convoys_eliminated_yr = fuel_saved_l_yr / FUEL_PER_CONVOY_L
     convoy_cost_saved_yr  = convoys_eliminated_yr * convoy_dist_miles * 600
 
     return {
@@ -500,8 +513,8 @@ def run_mvp_scenario(mode: str) -> dict:
         range_m=2000,
         target_power_kw=5.0,
         condition="clear",
-        fob_profile="squad_outpost",
-        convoy_distance_km=50,
+        fob_profile="auto",
+        convoy_distance_km=100,
     )
 
 
