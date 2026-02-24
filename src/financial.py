@@ -62,13 +62,18 @@ class SBIRBudget:
     phase_ii_months: int     = 24
     phase_ii_budget_usd: float = SBIR_PHASE_II_USD
     phase_iii_target_usd: float = SBIR_PHASE_III_USD
-    team_size_phase_i: int   = 3
-    team_size_phase_ii: int  = 8
-    avg_salary_usd_yr: float = 140_000.0   # fully-burdened labor
-    hardware_bom_phase_i: float  = 80_000.0
-    hardware_bom_phase_ii: float = 600_000.0
-    test_range_cost: float   = 50_000.0
-    safety_validation_usd: float = 100_000.0
+    # Phase I is a FEASIBILITY STUDY + lab bench demo, not a full build.
+    # 2 people (PI + 1 engineer), bench-scale hardware only.
+    team_size_phase_i: int   = 2
+    # Phase II builds an outdoor 500m prototype. 4 people + real hardware.
+    team_size_phase_ii: int  = 4
+    avg_salary_usd_yr: float = 110_000.0   # fully-burdened labor (inc. fringe)
+    # Phase I: small 1550nm laser module + PV test cells + bench optics + smoke chamber
+    hardware_bom_phase_i: float  = 35_000.0
+    # Phase II: mid-power laser system + beam director + optics — scoped to SBIR budget
+    hardware_bom_phase_ii: float = 300_000.0
+    test_range_cost: float   = 60_000.0
+    safety_validation_usd: float = 50_000.0
 
 
 def compute_sbir_budget(sbir: SBIRBudget) -> dict:
