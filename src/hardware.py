@@ -1,6 +1,6 @@
 """
 hardware.py - Hardware design calculator and BOM estimator
-Hummingbird Sim | Hardware Design Module
+Aether Sim | Hardware Design Module
 
 Sources & cost refs (2024 USD estimates):
   - Yb fiber laser (1070 nm, kW-class): ~$1,000–$2,000/W for CW fiber (IPG, nLIGHT)

@@ -1,6 +1,6 @@
 """
 financial.py - Financial model for WPT system economics
-Hummingbird Sim | Financial & ROI Module
+Aether Sim | Financial & ROI Module
 
 Sources & assumptions:
   - DoD convoy cost: $400–$800/convoy-mile (RAND Corp, Army study 2009)

@@ -1,6 +1,6 @@
 """
 charts.py - Visualization and report generation
-Hummingbird Sim | Charts & Reports Module
+Aether Sim | Charts & Reports Module
 """
 
 import numpy as np
@@ -55,7 +55,7 @@ def plot_range_sweep(df_laser: pd.DataFrame, df_mw: pd.DataFrame,
     """
     apply_style()
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-    fig.suptitle("Hummingbird Sim — System Efficiency vs. Range", fontsize=14,
+    fig.suptitle("Aether Sim — System Efficiency vs. Range", fontsize=14,
                   color="#c9d1d9", fontweight="bold")
 
     for ax, (df, mode_label) in zip(axes, [(df_laser, "LASER (1070 nm)"),
@@ -93,7 +93,7 @@ def plot_link_budget_waterfall(result_laser, result_mw: dict,
     """
     apply_style()
     fig, axes = plt.subplots(1, 2, figsize=(14, 7))
-    fig.suptitle("Hummingbird Sim — MVP Link Budget: 5 kW @ 2 km, Clear Sky",
+    fig.suptitle("Aether Sim — MVP Link Budget: 5 kW @ 2 km, Clear Sky",
                   fontsize=13, color="#c9d1d9", fontweight="bold")
 
     # Laser chain
@@ -163,7 +163,7 @@ def plot_safety_zones(laser_safety, mw_safety,
     """
     apply_style()
     fig, axes = plt.subplots(1, 2, figsize=(12, 6), subplot_kw={"polar": False})
-    fig.suptitle("Hummingbird Sim — Safety Exclusion Zones",
+    fig.suptitle("Aether Sim — Safety Exclusion Zones",
                   fontsize=13, color="#c9d1d9", fontweight="bold")
 
     # Laser irradiance profile
@@ -237,7 +237,7 @@ def plot_financial_summary(roi: dict, scaling: pd.DataFrame,
     """
     apply_style()
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-    fig.suptitle("Hummingbird Sim — Financial Model",
+    fig.suptitle("Aether Sim — Financial Model",
                   fontsize=13, color="#c9d1d9", fontweight="bold")
 
     # Cash flow / cumulative NPV
@@ -358,7 +358,7 @@ def generate_markdown_report(
     now = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
 
     md = [
-        "# Hummingbird Sim — Simulation Report",
+        "# Aether Sim — Simulation Report",
         f"*Generated: {now}*",
         "",
         "---",
@@ -523,7 +523,7 @@ def generate_markdown_report(
         "10. RAND Corp: DoD convoy cost estimates ($400–$800/convoy-mile)",
         "",
         "---",
-        "*Hummingbird Sim v0.1.0 — Defense WPT Engineering Platform*",
+        "*Aether Sim v0.1.0 — Defense WPT Engineering Platform*",
     ]
 
     return "\n".join(md)

@@ -1,8 +1,8 @@
-# 🦅 Hummingbird Sim
+# 🦅 Aether Sim
 
 **Wireless Power Transmission simulation platform for defense logistics**
 
-Hummingbird Sim models laser and microwave power beaming over 1–5 km to reduce fuel convoy exposure for military forward operating bases (FOBs). It covers physics, hardware design, safety, operational scenarios, and financial modeling end-to-end.
+Aether Sim models laser and microwave power beaming over 1–5 km to reduce fuel convoy exposure for military forward operating bases (FOBs). It covers physics, hardware design, safety, operational scenarios, and financial modeling end-to-end.
 
 ---
 
@@ -28,26 +28,26 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install numpy scipy matplotlib pandas
 
 # Compare laser vs microwave (MVP: 5 kW @ 2 km, clear sky)
-python hummingbird.py
+python aether.py
 
 # Single modality
-python hummingbird.py --mode laser
-python hummingbird.py --mode microwave
+python aether.py --mode laser
+python aether.py --mode microwave
 
 # Range sweep (0.5–10 km, all weather conditions)
-python hummingbird.py --mode sweep
+python aether.py --mode sweep
 
 # Safety analysis
-python hummingbird.py --mode safety
+python aether.py --mode safety
 
 # Hardware design + BOM
-python hummingbird.py --mode hardware
+python aether.py --mode hardware
 
 # Financial model + SBIR alignment
-python hummingbird.py --mode financial
+python aether.py --mode financial
 
 # Everything + save charts
-python hummingbird.py --mode all --charts --output output/
+python aether.py --mode all --charts --output output/
 ```
 
 ---
@@ -98,8 +98,8 @@ Smoke is the primary operational threat — attenuation is 10/km vs 0.1/km clear
 ## Architecture
 
 ```
-hummingbird-sim/
-├── hummingbird.py          # CLI entrypoint
+aether-sim/
+├── aether.py          # CLI entrypoint
 ├── src/
 │   ├── __init__.py
 │   ├── laser.py            # Gaussian beam physics, PV conversion

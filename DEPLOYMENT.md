@@ -1,4 +1,4 @@
-# Hummingbird Sim — Deployment Guide
+# Aether Sim — Deployment Guide
 
 ## Architecture
 
@@ -10,16 +10,16 @@ Browser → [Vercel] Next.js frontend → [Render] FastAPI backend → Python si
 
 | Repo | Purpose | URL |
 |------|---------|-----|
-| `kamber-tech/hummingbird-sim` | FastAPI backend + simulation modules | https://github.com/kamber-tech/hummingbird-sim |
-| `kamber-tech/hummingbird-web` | Next.js frontend | https://github.com/kamber-tech/hummingbird-web |
+| `kamber-tech/aether-sim` | FastAPI backend + simulation modules | https://github.com/kamber-tech/aether-sim |
+| `kamber-tech/aether-web` | Next.js frontend | https://github.com/kamber-tech/aether-web |
 
 ---
 
 ## Frontend (Vercel) ✅ DEPLOYED
 
-**Live URL:** https://hummingbird-web-xi.vercel.app
+**Live URL:** https://aether-web-xi.vercel.app
 
-**Inspect:** https://vercel.com/kamber-techs-projects/hummingbird-web
+**Inspect:** https://vercel.com/kamber-techs-projects/aether-web
 
 **Pages:**
 - `/` — Main simulator dashboard (mode selector, range/power sliders, results with charts)
@@ -28,12 +28,12 @@ Browser → [Vercel] Next.js frontend → [Render] FastAPI backend → Python si
 
 **Env vars set:**
 ```
-NEXT_PUBLIC_API_URL = https://hummingbird-sim-api.onrender.com
+NEXT_PUBLIC_API_URL = https://aether-sim-api.onrender.com
 ```
 
 **To redeploy after code changes:**
 ```bash
-cd /Users/admin/.openclaw/workspace/projects/hummingbird-web
+cd /Users/admin/.openclaw/workspace/projects/aether-web
 git add -A && git commit -m "..." && git push
 vercel --prod --yes
 ```
@@ -50,9 +50,9 @@ The Render CLI needs browser-based workspace authentication that can't be done h
 2. Login as `kamber@zeitindustries.com`
 3. Click **New +** → **Web Service**
 4. Select **"Build and deploy from a Git repository"**
-5. Connect `kamber-tech/hummingbird-sim`
+5. Connect `kamber-tech/aether-sim`
 6. Configure:
-   - **Name:** `hummingbird-sim-api`
+   - **Name:** `aether-sim-api`
    - **Runtime:** Python 3
    - **Build Command:** `pip install -r api/requirements.txt`
    - **Start Command:** `uvicorn api.main:app --host 0.0.0.0 --port $PORT`
@@ -62,14 +62,14 @@ The Render CLI needs browser-based workspace authentication that can't be done h
 The `render.yaml` in the repo root will be auto-detected and can also be used with:
 - **New +** → **Blueprint** → connect the same repo
 
-**Expected URL:** `https://hummingbird-sim-api.onrender.com`
+**Expected URL:** `https://aether-sim-api.onrender.com`
 
 ### Verify after deploy:
 ```bash
-curl https://hummingbird-sim-api.onrender.com/health
+curl https://aether-sim-api.onrender.com/health
 # → {"status": "ok"}
 
-curl -X POST https://hummingbird-sim-api.onrender.com/simulate \
+curl -X POST https://aether-sim-api.onrender.com/simulate \
   -H "Content-Type: application/json" \
   -d '{"mode":"laser","range_m":2000,"power_kw":5,"condition":"clear"}'
 ```
@@ -113,7 +113,7 @@ curl -X POST https://hummingbird-sim-api.onrender.com/simulate \
 
 ### Backend
 ```bash
-cd /Users/admin/.openclaw/workspace/projects/hummingbird-sim
+cd /Users/admin/.openclaw/workspace/projects/aether-sim
 .venv/bin/uvicorn api.main:app --port 8000 --reload
 
 # Test
@@ -125,7 +125,7 @@ curl -X POST http://localhost:8000/simulate \
 
 ### Frontend
 ```bash
-cd /Users/admin/.openclaw/workspace/projects/hummingbird-web
+cd /Users/admin/.openclaw/workspace/projects/aether-web
 
 # Point to local API
 echo "NEXT_PUBLIC_API_URL=http://localhost:8000" > .env.local

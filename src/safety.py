@@ -1,6 +1,6 @@
 """
 safety.py - Safety model for laser and microwave WPT
-Hummingbird Sim | Safety & Interlock Module
+Aether Sim | Safety & Interlock Module
 
 Sources:
   - Laser: IEC 60825-1:2014, ANSI Z136.1-2022

@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-hummingbird.py — Hummingbird Sim CLI
+aether.py — Aether Sim CLI
 Wireless Power Transmission simulation platform (defense logistics)
 
 Usage:
-  python hummingbird.py                          # default: compare laser vs microwave @ 2 km
-  python hummingbird.py --mode laser             # single laser scenario
-  python hummingbird.py --mode microwave         # single microwave scenario
-  python hummingbird.py --mode sweep             # range sweep 0.5–10 km
-  python hummingbird.py --mode financial         # financial + SBIR model
-  python hummingbird.py --mode all --charts      # everything + save charts
+  python aether.py                          # default: compare laser vs microwave @ 2 km
+  python aether.py --mode laser             # single laser scenario
+  python aether.py --mode microwave         # single microwave scenario
+  python aether.py --mode sweep             # range sweep 0.5–10 km
+  python aether.py --mode financial         # financial + SBIR model
+  python aether.py --mode all --charts      # everything + save charts
 """
 
 import argparse
@@ -55,7 +55,7 @@ def run_compare(charts: bool = False, output_dir: str = "output"):
     mw    = run_mvp_scenario("microwave")
 
     print("\n" + "=" * 65)
-    print("  HUMMINGBIRD SIM — LASER vs MICROWAVE @ 2 km (clear sky)")
+    print("  AETHER SIM — LASER vs MICROWAVE @ 2 km (clear sky)")
     print("=" * 65)
     print(print_scenario_report(laser))
     print()
@@ -199,7 +199,7 @@ def run_hardware(charts: bool = False):
 def run_all(system_cost: float = 500_000, charts: bool = False, output_dir: str = "output"):
     """Run full simulation suite."""
     print("\n" + "🦅 " * 20)
-    print("  HUMMINGBIRD SIM — FULL SIMULATION SUITE")
+    print("  AETHER SIM — FULL SIMULATION SUITE")
     print("  Wireless Power Transmission | Defense Logistics | MVP: 5 kW @ 2 km")
     print("🦅 " * 20)
 
@@ -230,7 +230,7 @@ def run_all(system_cost: float = 500_000, charts: bool = False, output_dir: str 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Hummingbird Sim — Wireless Power Transmission platform",
+        description="Aether Sim — Wireless Power Transmission platform",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )

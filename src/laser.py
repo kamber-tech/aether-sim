@@ -1,6 +1,6 @@
 """
 laser.py - Gaussian beam propagation and laser WPT physics engine
-Hummingbird Sim | Laser Wireless Power Transmission Module
+Aether Sim | Laser Wireless Power Transmission Module
 
 Sources:
   - Saleh & Teich, "Fundamentals of Photonics" (Gaussian beams)

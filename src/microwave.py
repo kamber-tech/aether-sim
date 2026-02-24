@@ -1,6 +1,6 @@
 """
 microwave.py - Microwave/RF beam physics engine
-Hummingbird Sim | Microwave Wireless Power Transmission Module
+Aether Sim | Microwave Wireless Power Transmission Module
 
 Sources:
   - Friis transmission: Friis 1946 Proc. IRE + Balanis "Antenna Theory" 4th ed.

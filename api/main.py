@@ -1,5 +1,5 @@
 """
-Hummingbird Sim — FastAPI Backend
+Aether Sim — FastAPI Backend
 Wireless Power Transmission simulator for defense logistics.
 """
 
@@ -75,7 +75,7 @@ def make_serializable(obj: Any) -> Any:
 # ── App setup ─────────────────────────────────────────────────────────────
 
 app = FastAPI(
-    title="Hummingbird Sim API",
+    title="Aether Sim API",
     description="Wireless Power Transmission simulation for defense logistics",
     version="1.0.0",
 )

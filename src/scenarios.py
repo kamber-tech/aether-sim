@@ -1,6 +1,6 @@
 """
 scenarios.py - Operational scenario simulator and parameter sweep
-Hummingbird Sim | Scenario Analysis Module
+Aether Sim | Scenario Analysis Module
 
 v2 changes:
   - target_power_kw is now actually honored — hardware is auto-sized to deliver it
