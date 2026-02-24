@@ -125,6 +125,14 @@ Last updated: 2026-02-24
 - **Key finding:** **800W+ delivered over 8.6 km (5.3 miles) in a 30-second transmission.** Total campaign: >1 megajoule transferred. Previous records: 230W at 1.7 km. Receiver designed by Teravec: compact aperture, parabolic mirror reflecting onto dozens of PV cells. **~20% efficiency from optical-out to electrical-out at shorter distances.** Horizontal ground path through maximum atmospheric thickness. Scalable to UAVs. POWER Phase 2 now moving to vertical transmission + integrated relays.
 - **Relevance to Aether:** **Single most important 2025 data point.** Sets real-world efficiency floor (~20%) for laser WPT at km-scale with state-of-the-art hardware. Key input: horizontal path is worst case; model vertical FOB beaming with ~5× lower loss.
 
+### DARPA POWER Program — Relay Teams Selected + Phase 2 (2023–2025)
+- **Authors:** DARPA program office; RTX Corporation, Draper, BEAM Co. (performer teams)
+- **Year:** 2023 (team selection); Phase 2 Industry Day: May 29, 2025
+- **Source:** DARPA official announcement
+- **URL:** https://www.darpa.mil/news/2023/power-beaming-relay | https://www.nrl.navy.mil/Media/News/Article/4235820/
+- **Key finding:** Three teams selected for Phase 1 relay design: **RTX Corporation, Draper, and BEAM Co.** Goal: design and develop wireless optical power relay systems for airborne deployment. Phase 1: benchtop demonstrations of critical relay technologies (~20 months). Phase 2 (2025): integration focus — "vertical power transmission + integrated relays." NRL recognized at Phase 2 Industry Day for PRAD record. Program goal: multi-path resilient energy network using airborne relay nodes.
+- **Relevance to Aether:** **Directly validates the Aether relay-regeneration architecture.** DARPA is spending $100M+ on exactly what Aether proposes — drone relay nodes regenerating and re-transmitting laser power. RTX, Draper, and BEAM Co. are the institutional competitors. Aether's differentiation: **terrestrial tactical ground WPT** (not airborne relays), and **open simulation platform** showing exactly why relay chains win vs. direct long-range shots.
+
 ### PowerLight Technologies — PTROL-UAS Program (December 2025)
 - **Authors:** Tom Nugent (CTO/co-founder), PowerLight Technologies
 - **Year:** December 16, 2025
