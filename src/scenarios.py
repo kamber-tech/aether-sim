@@ -505,6 +505,215 @@ def run_mvp_scenario(mode: str) -> dict:
     )
 
 
+def compute_space_scenario(
+    mode: str,              # "laser" or "microwave"
+    orbit: str,             # "iss_leo", "leo", "geo", or float altitude in km
+    power_kw: float,
+    condition: str = "clear",
+    # Microwave hardware params
+    mw_array_diameter_m: float = None,   # None = auto-size
+    mw_rectenna_area_m2: float = None,
+    # Laser hardware params
+    laser_aperture_m: float = 2.0,
+    laser_rx_aperture_m: float = 10.0,
+    zenith_angle_deg: float = 0.0,
+) -> dict:
+    """
+    Compute space-to-earth WPT scenario.
+
+    Auto-sizes hardware to attempt delivery of power_kw.
+    For GEO microwave: hardware will be enormous (km scale) — this is correct physics.
+    For LEO laser: hardware is feasible (2-10m apertures).
+    """
+    from .space import (SpaceTransmitter, SpaceReceiver, compute_space_link,
+                        ORBIT_PRESETS, ATMOSPHERIC_DEPTH_KM)
+
+    # Resolve orbit altitude
+    if isinstance(orbit, str) and orbit in ORBIT_PRESETS:
+        altitude_km = ORBIT_PRESETS[orbit]["altitude_km"]
+        orbit_name = ORBIT_PRESETS[orbit]["name"]
+    else:
+        try:
+            altitude_km = float(orbit)
+            orbit_name = f"Custom {altitude_km:.0f} km"
+        except Exception:
+            altitude_km = 600.0
+            orbit_name = "LEO (default)"
+
+    target_power_w = power_kw * 1000.0
+
+    # Auto-size hardware based on orbit and mode
+    if mode == "microwave":
+        if mw_array_diameter_m is None:
+            if altitude_km >= 20000:
+                mw_array_diameter_m = 2600.0   # GEO scale (JAXA concept)
+            elif altitude_km >= 2000:
+                mw_array_diameter_m = 500.0    # MEO scale
+            else:
+                mw_array_diameter_m = 100.0    # LEO scale
+
+        if mw_rectenna_area_m2 is None:
+            if altitude_km >= 20000:
+                mw_rectenna_area_m2 = 3.5e6    # 3.5 km² for GEO (JAXA concept)
+            elif altitude_km >= 2000:
+                mw_rectenna_area_m2 = 50000.0  # 50,000 m² for MEO
+            else:
+                mw_rectenna_area_m2 = 10000.0  # 10,000 m² for LEO
+
+    tx = SpaceTransmitter(
+        mode=mode,
+        altitude_km=altitude_km,
+        mw_array_diameter_m=mw_array_diameter_m or 1000.0,
+        laser_aperture_m=laser_aperture_m,
+    )
+    rx = SpaceReceiver(
+        mode=mode,
+        mw_rectenna_area_m2=mw_rectenna_area_m2 or 1e6,
+        laser_pv_aperture_m=laser_rx_aperture_m,
+    )
+
+    result = compute_space_link(tx, rx, condition, target_power_w, zenith_angle_deg)
+
+    # Add economics (same model as ground scenarios)
+    dc_kw = result.get("dc_power_delivered_kw", 0)
+    fob_load_kw = 15.0
+    fob_fuel_l_day = 200.0
+    fuel_saved_l_day = (dc_kw / fob_load_kw) * fob_fuel_l_day
+    fuel_saved_l_yr = fuel_saved_l_day * 365
+    convoy_threshold_l = 500.0
+    convoys_yr = fuel_saved_l_yr / convoy_threshold_l
+    fuel_cost_usd = fuel_saved_l_yr * DIESEL_FULLY_BURDENED_USD_L
+    convoy_cost_usd = convoys_yr * 600 * 62
+
+    result.update({
+        "orbit_name": orbit_name,
+        "altitude_km": altitude_km,
+        "target_power_kw": power_kw,
+        "range_km": altitude_km,
+        "condition": condition,
+        "fuel_saved_l_day": round(fuel_saved_l_day, 1),
+        "fuel_saved_l_yr": round(fuel_saved_l_yr, 0),
+        "convoys_eliminated_yr": round(convoys_yr, 1),
+        "fuel_cost_saved_yr_usd": round(fuel_cost_usd, 0),
+        "convoy_cost_saved_yr_usd": round(convoy_cost_usd, 0),
+        "total_value_yr_usd": round(fuel_cost_usd + convoy_cost_usd, 0),
+        "wpt_coverage_pct": round(min(dc_kw / fob_load_kw * 100, 100), 1),
+    })
+
+    return result
+
+
+def compute_optimized_scenario(
+    mode: str,
+    range_m: int,
+    power_kw: float,
+    condition: str,
+    optimizations: list = None,
+) -> dict:
+    """
+    Run scenario with efficiency optimizations applied.
+
+    optimizations: list of strings from:
+      - "adaptive_optics"    — applies 2.5x Strehl improvement for laser
+      - "inp_cells"          — uses InP 55% PV efficiency instead of default 35%
+      - "large_aperture"     — doubles TX and RX aperture sizes (4x area)
+      - "high_power_density" — ensures high power density at receiver (85% rectenna)
+      - "all"                — all of the above
+
+    Returns base result + optimized result + improvement factors.
+    """
+    if optimizations is None:
+        optimizations = ["all"]
+    if "all" in optimizations:
+        optimizations = ["adaptive_optics", "inp_cells", "large_aperture", "high_power_density"]
+
+    # Get baseline
+    base = compute_scenario(mode, range_m, power_kw, condition)
+
+    opt_result = dict(base)
+    improvement_notes = []
+
+    base_eff = base.get("system_efficiency_pct", 0)
+    opt_eff = base_eff
+
+    if "adaptive_optics" in optimizations and mode == "laser":
+        # AO pre-compensation improves Strehl ratio significantly
+        # Typical improvement: 3-5x in Strehl → 2-3x in received power
+        # Reference: AFRL adaptive optics for directed energy, 2-4x improvement reported
+        ao_factor = 2.5
+        opt_eff *= ao_factor
+        improvement_notes.append(
+            f"Adaptive optics: +{ao_factor}x Strehl correction (pre-compensation)"
+        )
+
+    if "inp_cells" in optimizations and mode == "laser":
+        # InP cells: 55% vs default 35% PV efficiency
+        # Reference: Alta Devices/NextGen Solar 55.2% at 1070nm monochromatic (2023)
+        inp_factor = 0.55 / 0.35
+        opt_eff *= inp_factor
+        improvement_notes.append(
+            f"InP PV cells: {0.55/0.35:.1f}x efficiency gain (55% vs 35%)"
+        )
+
+    if "large_aperture" in optimizations:
+        if mode == "laser":
+            # 4x aperture area → 4x geometric collection
+            aperture_factor = 4.0
+            opt_eff *= aperture_factor
+            improvement_notes.append(
+                f"Large aperture (2x diameter = 4x area): {aperture_factor}x collection"
+            )
+        else:
+            # For microwave: 2x elements → 4x received power (P_rx ∝ n²)
+            aperture_factor = 4.0
+            opt_eff *= aperture_factor
+            improvement_notes.append(
+                f"Larger array (2x elements = 4x gain²): {aperture_factor}x improvement"
+            )
+
+    if "high_power_density" in optimizations and mode == "microwave":
+        # Ensure rectenna operates in high-efficiency regime (85% vs 60%)
+        rectenna_factor = 0.85 / 0.65
+        opt_eff *= rectenna_factor
+        improvement_notes.append(
+            f"High-density rectenna array: {rectenna_factor:.1f}x RF-DC conversion"
+        )
+
+    # Cap at physical maximum (DARPA PRAD anchor ~20%, theoretical max ~35%)
+    opt_eff = min(opt_eff, 35.0)
+
+    # Scale DC delivered proportionally
+    base_dc = base.get("dc_power_delivered_kw", 0)
+    if base_eff > 0:
+        dc_scale = opt_eff / base_eff
+    else:
+        dc_scale = 1.0
+    opt_dc = min(base_dc * dc_scale, power_kw)  # can't deliver more than target
+    opt_input = opt_dc / max(opt_eff / 100, 0.001)
+
+    opt_result["system_efficiency_pct"] = round(opt_eff, 2)
+    opt_result["dc_power_delivered_kw"] = round(opt_dc, 3)
+    opt_result["electrical_input_kw"] = round(opt_input, 1)
+    opt_result["optimizations_applied"] = optimizations
+    opt_result["improvement_notes"] = improvement_notes
+    opt_result["baseline_efficiency_pct"] = round(base_eff, 2)
+    opt_result["efficiency_gain_factor"] = round(opt_eff / max(base_eff, 0.001), 1)
+    # Remove physics (LaserLinkResult dataclass) from opt_result to avoid serialization issues
+    opt_result.pop("physics", None)
+
+    return {
+        "mode": "optimized",
+        "base": {k: v for k, v in base.items() if k != "physics"},
+        "optimized": opt_result,
+        "improvement_summary": {
+            "baseline_eff_pct": round(base_eff, 2),
+            "optimized_eff_pct": round(opt_eff, 2),
+            "gain_factor": round(opt_eff / max(base_eff, 0.001), 1),
+            "notes": improvement_notes,
+        },
+    }
+
+
 def print_scenario_report(s: dict) -> str:
     lines = [
         "=" * 65,

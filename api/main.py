@@ -13,7 +13,7 @@ import json
 import math
 import dataclasses
 import numpy as np
-from typing import Any
+from typing import Any, Optional, List
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,6 +24,8 @@ from src.scenarios import (
     compute_scenario,
     sweep_range_and_conditions,
     run_mvp_scenario,
+    compute_space_scenario,
+    compute_optimized_scenario,
 )
 from src.financial import (
     FinancialAssumptions,
@@ -103,6 +105,26 @@ class FinancialRequest(BaseModel):
     power_kw: float = Field(5.0, ge=0.1)
     convoy_distance_km: float = Field(50.0, ge=1)
     convoy_trips_month: float = Field(4.0, ge=0)
+
+
+class SpaceRequest(BaseModel):
+    mode: str = Field("laser", description="laser | microwave")
+    orbit: str = Field("leo", description="iss_leo | leo | meo | geo | custom altitude km")
+    power_kw: float = Field(5.0, ge=0.1, le=10000)
+    condition: str = Field("clear", description="clear | haze | smoke | rain | fog")
+    laser_aperture_m: float = Field(2.0, ge=0.1, le=50.0)
+    laser_rx_aperture_m: float = Field(10.0, ge=0.5, le=100.0)
+    mw_array_diameter_m: Optional[float] = Field(None, ge=10.0, le=10000.0)
+    mw_rectenna_area_m2: Optional[float] = Field(None, ge=100.0)
+    zenith_angle_deg: float = Field(0.0, ge=0.0, le=75.0)
+
+
+class OptimizedRequest(BaseModel):
+    mode: str = Field(..., description="laser | microwave")
+    range_m: int = Field(2000, ge=100, le=50000)
+    power_kw: float = Field(5.0, ge=0.1, le=500)
+    condition: str = Field("clear")
+    optimizations: List[str] = Field(["all"])
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────
@@ -247,6 +269,42 @@ def hardware(
             raise HTTPException(status_code=400, detail=f"Unknown mode: {mode}")
 
         return make_serializable(spec)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/simulate/space")
+def simulate_space(req: SpaceRequest):
+    """Space-to-earth WPT simulation."""
+    try:
+        result = compute_space_scenario(
+            mode=req.mode,
+            orbit=req.orbit,
+            power_kw=req.power_kw,
+            condition=req.condition,
+            mw_array_diameter_m=req.mw_array_diameter_m,
+            mw_rectenna_area_m2=req.mw_rectenna_area_m2,
+            laser_aperture_m=req.laser_aperture_m,
+            laser_rx_aperture_m=req.laser_rx_aperture_m,
+            zenith_angle_deg=req.zenith_angle_deg,
+        )
+        return make_serializable(result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/simulate/optimized")
+def simulate_optimized(req: OptimizedRequest):
+    """Run scenario with efficiency optimizations applied."""
+    try:
+        result = compute_optimized_scenario(
+            mode=req.mode,
+            range_m=req.range_m,
+            power_kw=req.power_kw,
+            condition=req.condition,
+            optimizations=req.optimizations,
+        )
+        return make_serializable(result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
